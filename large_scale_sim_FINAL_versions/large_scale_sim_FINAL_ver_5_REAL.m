@@ -40,6 +40,7 @@ SCAN_INTERVAL_SIM = 1.0;
 % 3 = Perimeter Defense
 % 4 = 50/50 Split between Fortress and Perimeter
 MIC_STRATEGY = 1; 
+NUM_MICS = 320;
 % -------------------------------------------------------------------------
 % 1.5. SCALING BASED ON REAL-WORLD MEASUREMENTS
 % -------------------------------------------------------------------------
@@ -251,13 +252,13 @@ end
 mic_specs.range_e = m2px(MIC_RANGE_E_M);        
 mic_specs.range_p = m2px(MIC_RANGE_P_M);        
 if MIC_STRATEGY == 1
-    [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_specs);
+    [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_specs, NUM_MICS);
 elseif MIC_STRATEGY == 2
-    [mics, num_mics] = place_mics_fortress(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, attractor);
+    [mics, num_mics] = place_mics_fortress(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, NUM_MICS);
 elseif MIC_STRATEGY == 3
-    [mics, num_mics] = place_mics_perimeter(WIDTH, HEIGHT, park_boundary_x, park_boundary_y, mic_specs);
+    [mics, num_mics] = place_mics_perimeter(WIDTH, HEIGHT, park_boundary_x, park_boundary_y, mic_specs, NUM_MICS);
 elseif MIC_STRATEGY == 4
-    [mics, num_mics] = place_mics_optimized_web(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, attractor, m2px, park_boundary_x, park_boundary_y);
+    [mics, num_mics] = place_mics_optimized_web(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, attractor, m2px, park_boundary_x, park_boundary_y, NUM_MICS);
 end
 
 for m = 1:num_mics
@@ -800,8 +801,7 @@ end
 % PLACEMENT FUNCTIONS
 % =========================================================================
 % STRATEGY 1: UNIFORM GLOBAL SPREAD
-function [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_specs)
-    num_mics = 80;
+function [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_specs, num_mics)
     mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,...
         'threat',false,'last_scan',0,'missed',false,'has_memory',false), num_mics, 1);
 
@@ -861,224 +861,197 @@ function [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_
 end
 
 % STRATEGY 2: TARGETED FORTRESS
-function [mics, num_mics] = place_mics_fortress(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, attractor)
-    num_mics = 80;
-    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false,'last_scan',0,'missed',false,'has_memory',false), num_mics, 1);
+function [mics, num_mics] = place_mics_fortress(WIDTH, HEIGHT, isInsidePark, ...
+                             mic_specs, repulsors, num_mics)
+
+    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false, ...
+        'last_scan',0,'missed',false,'has_memory',false,'elephant_memory',-999999), num_mics, 1);
     count = 0;
 
-    % 12 mics per village (60 total) — ring sits one detection range outside village boundary
-    mics_per_village = 12;
-    for r = 1:length(repulsors)
+    % --- Proportional allocation ---
+    num_villages     = length(repulsors);
+    budget_village   = round(num_mics * 0.75);
+    mics_per_village = floor(budget_village / num_villages);
+
+    % --- Village rings ---
+    for r = 1:num_villages
         ring_radius = repulsors(r).radius + mic_specs.range_p;
         for i = 1:mics_per_village
             angle = (i / mics_per_village) * 2 * pi;
             mx = repulsors(r).x + ring_radius * cos(angle);
             my = repulsors(r).y + ring_radius * sin(angle);
             if isInsidePark(mx, my) && count < num_mics
-                count = count + 1; mics(count).x = mx; mics(count).y = my;
+                count = count + 1;
+                mics(count).x = mx; mics(count).y = my;
             end
         end
     end
 
-    % 10 mics around the Bai — ring sits one detection range outside Bai boundary
-    mics_bai = 10;
-    ring_radius_g = attractor.radius + mic_specs.range_p;
-    for i = 1:mics_bai
-        angle = (i / mics_bai) * 2 * pi;
-        mx = attractor.x + ring_radius_g * cos(angle);
-        my = attractor.y + ring_radius_g * sin(angle);
-        if isInsidePark(mx, my) && count < num_mics
-            count = count + 1; mics(count).x = mx; mics(count).y = my;
+    % --- Fill remaining slots using Farthest Point Sampling ---
+    % Step 1: Build dense candidate grid
+    grid_step = 10;
+    candidates = [];
+    for gx = grid_step:grid_step:WIDTH
+        for gy = grid_step:grid_step:HEIGHT
+            if isInsidePark(gx, gy)
+                candidates(end+1, :) = [gx, gy];
+            end
         end
     end
 
-    % Fill remaining slots uniformly
-    min_spacing = mic_specs.range_p * 2.0;
-    attempts = 0;
-    while count < num_mics && attempts < 10000
-        mx = rand() * WIDTH; my = rand() * HEIGHT;
-        if isInsidePark(mx, my)
-            too_close = false;
-            for j = 1:count
-                if norm([mx - mics(j).x, my - mics(j).y]) < min_spacing, too_close = true; break; end
-            end
-            if ~too_close, count = count + 1; mics(count).x = mx; mics(count).y = my; end
-        end
-        attempts = attempts + 1;
-        if mod(attempts, 500) == 0, min_spacing = min_spacing * 0.9; end
+    % Step 2: Initialise min_dists from already-placed village ring mics
+    % so FPS treats them as already "occupying" space
+    n_cands = size(candidates, 1);
+    min_dists = inf(n_cands, 1);
+    for j = 1:count
+        d = vecnorm(candidates - [mics(j).x, mics(j).y], 2, 2);
+        min_dists = min(min_dists, d);
     end
+
+    % Step 3: FPS fills remaining slots
+    while count < num_mics
+        [~, best_idx] = max(min_dists);
+        count = count + 1;
+        mics(count).x = candidates(best_idx, 1);
+        mics(count).y = candidates(best_idx, 2);
+
+        % Update min distances with newly placed mic
+        d_new = vecnorm(candidates - candidates(best_idx, :), 2, 2);
+        min_dists = min(min_dists, d_new);
+    end
+
     mics = mics(1:count);
     num_mics = count;
 end
+
 % STRATEGY 3: PERIMETER DEFENSE
-function [mics, num_mics] = place_mics_perimeter(~, ~, park_boundary_x, park_boundary_y, mic_specs)
-    num_mics = 80;
-    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false,'last_scan',0,'missed',false,'has_memory',false), num_mics, 1);
+function [mics, num_mics] = place_mics_perimeter(~, ~, park_boundary_x, park_boundary_y, mic_specs, num_mics)
+    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false, ...
+        'last_scan',0,'missed',false,'has_memory',false,'elephant_memory',-999999), num_mics, 1);
     count = 0;
-    
+    total_length = 0;
+    for i=1:length(park_boundary_x)-1
+        total_length=total_length+norm([park_boundary_x(i+1)-park_boundary_x(i),park_boundary_y(i+1)-park_boundary_y(i)]);
+    end
+    spacing=total_length/num_mics; curr_dist=0; segment=1;
+    while count<num_mics && segment<length(park_boundary_x)
+        p1=[park_boundary_x(segment),park_boundary_y(segment)];
+        p2=[park_boundary_x(segment+1),park_boundary_y(segment+1)];
+        seg_len=norm(p2-p1);
+        while curr_dist+spacing<=seg_len && count<num_mics
+            curr_dist=curr_dist+spacing;
+            ratio=curr_dist/seg_len;
+            mx=p1(1)+ratio*(p2(1)-p1(1)); my=p1(2)+ratio*(p2(2)-p1(2));
+            dir=(p2-p1)/seg_len; normal=[-dir(2),dir(1)];
+            mx=mx+normal(1)*mic_specs.range_p*0.5;
+            my=my+normal(2)*mic_specs.range_p*0.5;
+            count=count+1; mics(count).x=mx; mics(count).y=my;
+        end
+        curr_dist=curr_dist-seg_len; segment=segment+1;
+    end
+    mics=mics(1:count); num_mics=count;
+end
+
+% STRATEGY 4: 50/50 Split between Red Zone Fortress and Perimeter Coverage
+function [mics, num_mics] = place_mics_optimized_web(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, ~, m2px, park_boundary_x, park_boundary_y, num_mics)
+
+    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false, ...
+        'last_scan',0,'missed',false,'has_memory',false,'elephant_memory',-999999), num_mics, 1);
+    count = 0;
+
+    % ---------------------------------------------------------------
+    % Phase 1: 50% — Village rings (exact S2 logic)
+    % ---------------------------------------------------------------
+    half_mics        = floor(num_mics * 0.5);
+    num_villages     = length(repulsors);
+    mics_per_village = floor(half_mics / num_villages);
+
+    for r = 1:num_villages
+        ring_radius = repulsors(r).radius + mic_specs.range_p;
+        for i = 1:mics_per_village
+            angle = (i / mics_per_village) * 2 * pi;
+            mx = repulsors(r).x + ring_radius * cos(angle);
+            my = repulsors(r).y + ring_radius * sin(angle);
+            if isInsidePark(mx, my) && count < half_mics
+                count = count + 1;
+                mics(count).x = mx;
+                mics(count).y = my;
+            end
+        end
+    end
+
+    % ---------------------------------------------------------------
+    % Phase 2: 50% — Perimeter defense (exact S3 logic)
+    % ---------------------------------------------------------------
     total_length = 0;
     for i = 1:length(park_boundary_x)-1
-        total_length = total_length + norm([park_boundary_x(i+1)-park_boundary_x(i), park_boundary_y(i+1)-park_boundary_y(i)]);
+        total_length = total_length + norm([park_boundary_x(i+1)-park_boundary_x(i), ...
+                                            park_boundary_y(i+1)-park_boundary_y(i)]);
     end
-    
-    spacing = total_length / num_mics;
+
+    % Spacing based on remaining slots needed
+    spacing = total_length / half_mics;
     curr_dist = 0;
-    segment = 1;
-    
+    segment   = 1;
+
     while count < num_mics && segment < length(park_boundary_x)
-        p1 = [park_boundary_x(segment), park_boundary_y(segment)];
+        p1 = [park_boundary_x(segment),   park_boundary_y(segment)];
         p2 = [park_boundary_x(segment+1), park_boundary_y(segment+1)];
         seg_len = norm(p2 - p1);
-        
+
         while curr_dist + spacing <= seg_len && count < num_mics
             curr_dist = curr_dist + spacing;
             ratio = curr_dist / seg_len;
             mx = p1(1) + ratio * (p2(1) - p1(1));
             my = p1(2) + ratio * (p2(2) - p1(2));
-            
-            dir = (p2 - p1) / seg_len;
-            normal = [-dir(2), dir(1)]; 
-            
+
+            dir    = (p2 - p1) / seg_len;
+            normal = [-dir(2), dir(1)];
             mx = mx + normal(1) * (mic_specs.range_p * 0.5);
             my = my + normal(2) * (mic_specs.range_p * 0.5);
-            
+
             count = count + 1;
             mics(count).x = mx;
             mics(count).y = my;
         end
         curr_dist = curr_dist - seg_len;
-        segment = segment + 1;
+        segment   = segment + 1;
     end
-    mics = mics(1:count);
-    num_mics = count;
-end
-% STRATEGY 4: 50/50 Split between Red Zone Fortress and Perimeter Coverage
-function [mics, num_mics] = place_mics_optimized_web(WIDTH, HEIGHT, isInsidePark, mic_specs, repulsors, ~, m2px, park_boundary_x, park_boundary_y)
-    num_mics = 80;
-    mics = repmat(struct('x',0,'y',0,'active_e',false,'active_p',false,'threat',false,'last_scan',0,'missed',false,'has_memory',false), num_mics, 1);
-    count = 0;
-    
-    univ_min_spacing = mic_specs.range_p * 1.2; 
-    
-    % Phase 1: 50% (40 mics) covering Red Zones — 8 per village
-    % Ring sits one detection range outside village boundary so bubble covers approach paths
-    mics_per_zone = 8;
-    for r = 1:length(repulsors)
-        ring_radius = repulsors(r).radius + mic_specs.range_p;
-        for i = 1:mics_per_zone
-            angle = (i / mics_per_zone) * 2 * pi;
-            mx = repulsors(r).x + ring_radius * cos(angle);
-            my = repulsors(r).y + ring_radius * sin(angle);
-            
-            if ~isInsidePark(mx, my)
-                mx = repulsors(r).x + (ring_radius * 0.5) * cos(angle);
-                my = repulsors(r).y + (ring_radius * 0.5) * sin(angle);
-            end
-            
-            attempts = 0;
-            current_radius = ring_radius;
-            while attempts < 50
-                too_close = false;
-                for j = 1:count
-                    if norm([mx - mics(j).x, my - mics(j).y]) < univ_min_spacing
-                        too_close = true; break; 
-                    end
+
+    % ---------------------------------------------------------------
+    % Phase 3: FPS fill for any remaining slots (exact S1/S2 logic)
+    % ---------------------------------------------------------------
+    if count < num_mics
+        % Build candidate grid
+        grid_step  = 10;
+        candidates = [];
+        for gx = grid_step:grid_step:WIDTH
+            for gy = grid_step:grid_step:HEIGHT
+                if isInsidePark(gx, gy)
+                    candidates(end+1, :) = [gx, gy];
                 end
-                if ~too_close
-                    break; 
-                end
-                angle = angle + 0.2;
-                current_radius = current_radius * 0.95;
-                mx = repulsors(r).x + current_radius * cos(angle);
-                my = repulsors(r).y + current_radius * sin(angle);
-                attempts = attempts + 1;
-            end
-            
-            if count < 40
-                count = count + 1; 
-                mics(count).x = mx; 
-                mics(count).y = my; 
             end
         end
-    end
-    
-    % Phase 2: 50% (40 mics) Perimeter Defense
-    total_length = 0;
-    for i = 1:length(park_boundary_x)-1
-        total_length = total_length + norm([park_boundary_x(i+1)-park_boundary_x(i), park_boundary_y(i+1)-park_boundary_y(i)]);
-    end
-    
-    num_candidates = 300;
-    cand_spacing = total_length / num_candidates;
-    candidates = zeros(num_candidates, 2);
-    c_idx = 1;
-    curr_dist = 0;
-    segment = 1;
-    
-    while segment < length(park_boundary_x) && c_idx <= num_candidates
-        p1 = [park_boundary_x(segment), park_boundary_y(segment)];
-        p2 = [park_boundary_x(segment+1), park_boundary_y(segment+1)];
-        seg_len = norm(p2 - p1);
-        
-        while curr_dist + cand_spacing <= seg_len && c_idx <= num_candidates
-            curr_dist = curr_dist + cand_spacing;
-            ratio = curr_dist / seg_len;
-            mx = p1(1) + ratio * (p2(1) - p1(1));
-            my = p1(2) + ratio * (p2(2) - p1(2));
-            
-            dir = (p2 - p1) / seg_len;
-            normal = [-dir(2), dir(1)]; 
-            mx = mx + normal(1) * (mic_specs.range_p * 0.5);
-            my = my + normal(2) * (mic_specs.range_p * 0.5);
-            
-            candidates(c_idx, :) = [mx, my];
-            c_idx = c_idx + 1;
-        end
-        curr_dist = curr_dist - seg_len;
-        segment = segment + 1;
-    end
-    
-    mics_for_perimeter = num_mics - count;
-    target_indices = round(linspace(1, c_idx-1, mics_for_perimeter));
-    univ_min_spacing = mic_specs.range_p * 1.5; 
-    
-    for i = 1:length(target_indices)
-        if target_indices(i) == 0, continue; end
-        mx = candidates(target_indices(i), 1);
-        my = candidates(target_indices(i), 2);
-        
-        too_close = false;
+
+        % Seed min_dists from all already-placed mics
+        n_cands   = size(candidates, 1);
+        min_dists = inf(n_cands, 1);
         for j = 1:count
-            if norm([mx - mics(j).x, my - mics(j).y]) < univ_min_spacing
-                too_close = true; break;
-            end
+            d = vecnorm(candidates - [mics(j).x, mics(j).y], 2, 2);
+            min_dists = min(min_dists, d);
         end
-        
-        if ~too_close && isInsidePark(mx, my) && count < num_mics
+
+        % FPS fills remaining slots
+        while count < num_mics
+            [~, best_idx] = max(min_dists);
             count = count + 1;
-            mics(count).x = mx;
-            mics(count).y = my;
+            mics(count).x = candidates(best_idx, 1);
+            mics(count).y = candidates(best_idx, 2);
+            d_new     = vecnorm(candidates - candidates(best_idx, :), 2, 2);
+            min_dists = min(min_dists, d_new);
         end
     end
-    
-    % Phase 3: Adaptive Fill for any missed slots
-    min_spacing = mic_specs.range_p * 1.5; 
-    attempts = 0;
-    while count < num_mics && attempts < 5000
-        mx = rand() * WIDTH; my = rand() * HEIGHT;
-        if isInsidePark(mx, my)
-            too_close = false;
-            for j = 1:count
-                if norm([mx - mics(j).x, my - mics(j).y]) < min_spacing, too_close = true; break; end
-            end
-            if ~too_close
-                count = count + 1; mics(count).x = mx; mics(count).y = my; 
-            end
-        end
-        attempts = attempts + 1;
-        if mod(attempts, 200) == 0, min_spacing = min_spacing * 0.9; end
-    end
-    
-    mics = mics(1:count);
+
+    mics     = mics(1:count);
     num_mics = count;
 end
