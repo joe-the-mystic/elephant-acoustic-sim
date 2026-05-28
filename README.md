@@ -13,13 +13,13 @@ This repository contains the Simulation code for the Acoustic Detection of Eleph
 * Poachers are randomized to spawn from the red zones or from outside the boundaries of the park to maximize the threat variance.
 * Elephants within poaching range (~1.5 km) but not yet poached are shown in bright yellow (Threatened state), making close encounters visually distinct from safe roaming.
 * Microphones can detect Elephant Rumbles up to **4km away**, as these are low-frequency infrasound rumbles that travel far in a dense forest.
-* Microphones can detect Poachers **2.3kms away**, as these are high-frequency sounds that cannot travel as much as elephant rumbles.
+* Microphones can detect Poachers **200m away**, as these are high-frequency sounds that cannot travel as much as elephant rumbles.
 ### Interception and Incident Response
 * Microphones are placed to detect Poachers before the Poachers can poach the Elephants in the Park. If a poacher and an elephant are detected by the same microphone, then an Alert is issued by that mic and a Ranger is dispatched to that mic location.
 * Microphones can store information of an elephant detection for up to 4 hours (in simulation time). If a poacher is detected by the same mic in this duration, the mic issues an alert.
 * When an alert is issued, a ranger is dispatched from the nearest village (Red Zone) to neutralize the Poacher. The ranger is assumed to move in a car at **20 km/hr** to that location.
 * **Success:** A poacher is neutralized when the ranger reaches the Poacher's position. The poacher is stopped and turns into a Green Star in the simulation.
-* **Failure:** If a poacher slips through the mic ranges and reaches within ~1.5 km of an elephant, there is a probabilistic encounter roll that is perfomed at 50% success rate. Based on the probability value of that encounter, the elephant is either Poached (Red Cross in simulation) or the Elephant escapes (turns yellow and back to blue). If the elephant escapes, it flees in the opposite direction to the poacher, ensuring separation more than ~1.5 km before another attempt.
+* **Failure:** If a poacher slips through the mic ranges and reaches within 100m of an elephant, there is a probabilistic encounter roll that is perfomed at 85% success rate. Based on the probability value of that encounter, the elephant is either Poached (Red Cross in simulation) or the Elephant escapes (turns yellow and back to blue). If the elephant escapes, it flees in the opposite direction to the poacher, ensuring separation more than ~3km before another attempt.
 ### Acoustic Sensor Network
 * The simulation allows Users to test out **4 distinct microphone placement algorithms**
   - Uniform Spread: Mics are placed uniformly all across the entire park.
