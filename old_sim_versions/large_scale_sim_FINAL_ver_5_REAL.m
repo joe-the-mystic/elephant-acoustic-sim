@@ -39,8 +39,8 @@ SCAN_INTERVAL_SIM = 1.0;
 % 2 = Targeted Fortress (Red Zones & Green Zone)
 % 3 = Perimeter Defense
 % 4 = 50/50 Split between Fortress and Perimeter
-MIC_STRATEGY = 4; 
-NUM_MICS = 40;
+MIC_STRATEGY = 1; 
+NUM_MICS = 80;
 % -------------------------------------------------------------------------
 % 1.5. SCALING BASED ON REAL-WORLD MEASUREMENTS
 % -------------------------------------------------------------------------
