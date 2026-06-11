@@ -433,8 +433,9 @@ while ishandle(h_fig)
         last_paused = paused;
     end
     if paused == 1
-        drawnow limitrate; 
-        continue; 
+        drawnow limitrate;
+        pause(0.05);   % give up CPU while paused instead of busy-spinning
+        continue;
     end
     
     time_multiplier = get(h_slider, 'Value');
