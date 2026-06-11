@@ -57,6 +57,9 @@ MIC_RANGE_P_M = 200; % 200m for realistic poacher detection by Mic
 POACH_DIST_M = 100;  % 100m for realistic poacher elephant distance for poaching     
 DIST_REACHED_M = 1266;   
 AVOID_BUFFER_M = 2533;   
+CAPTURE_AVOID_RADIUS_M = 4000;   % How far a danger memory repels poachers (~4 km)
+CAPTURE_FORCE_STRENGTH = 3.0;    % Push weight; set to 0 to disable poacher capture avoidance
+CAPTURE_MEMORY_HOURS   = 72;     % How long poachers remember a capture site (0 = forever)
 DEEP_FOREST_M = 10000;  
 % -------------------------------------------------------------------------
 % 2. PARK BOUNDARY DEFINITION 
@@ -406,6 +409,9 @@ frame_count = 0;
 last_paused = -1;
 last_multiplier = -1;
 
+% Poacher capture memory: each row is [x_px, y_px, sim_time_recorded]
+capture_sites = zeros(0, 3);
+
 % Pre-allocate threat lines buffer — fixed size, no per-frame allocation
 max_tl = num_poachers * 4;
 threat_lines_x = NaN(1, max_tl);
@@ -464,7 +470,22 @@ while ishandle(h_fig)
             des_vx = des_vx + ((poachers(p).x - attractor.x)/d_green) * 4.0;
             des_vy = des_vy + ((poachers(p).y - attractor.y)/d_green) * 4.0;
         end
-        
+
+        % --- Avoid past capture sites ---
+        for s = 1:size(capture_sites, 1)
+            site_age_hr = (current_sim_time - capture_sites(s,3)) / 3600;   % if sim_time is in seconds
+            if CAPTURE_MEMORY_HOURS > 0 && site_age_hr > CAPTURE_MEMORY_HOURS
+                continue;   
+            end
+
+            d_enc = norm([poachers(p).x - capture_sites(s,1), ...
+                          poachers(p).y - capture_sites(s,2)]);
+            if d_enc < m2px(CAPTURE_AVOID_RADIUS_M) && d_enc > 0
+                des_vx = des_vx + ((poachers(p).x - capture_sites(s,1)) / d_enc) * CAPTURE_FORCE_STRENGTH;
+                des_vy = des_vy + ((poachers(p).y - capture_sites(s,2)) / d_enc) * CAPTURE_FORCE_STRENGTH;
+            end
+        end
+                    
         mag_des = norm([des_vx, des_vy]); 
         if mag_des > 0, des_vx = des_vx/mag_des; des_vy = des_vy/mag_des; end
         poachers(p).vx = (poachers(p).vx * 0.95) + (des_vx * 0.05); 
@@ -629,6 +650,7 @@ while ishandle(h_fig)
             if dist < m2px(500) 
                 poachers(p).is_caught = true;
                 poachers(p).caught_time = current_sim_time;
+                capture_sites(end+1, :) = [poachers(p).x, poachers(p).y, current_sim_time];
             else
                 vec_x = (poachers(p).x - poachers(p).ranger_x) / dist;
                 vec_y = (poachers(p).y - poachers(p).ranger_y) / dist;
