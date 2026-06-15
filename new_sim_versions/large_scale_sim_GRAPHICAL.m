@@ -61,7 +61,7 @@ POACH_DIST_M = 100;  % 100m for realistic poacher elephant distance for poaching
 DIST_REACHED_M = 1266;   
 AVOID_BUFFER_M = 2533;   
 CAPTURE_AVOID_RADIUS_M = 4000;   % How far a danger memory repels poachers (~4 km)
-CAPTURE_FORCE_STRENGTH = 3.0;    % Push weight; set to 0 to disable poacher capture avoidance
+CAPTURE_FEAR_STRENGTH = 3.0;    % Push weight; set to 0 to disable poacher capture avoidance
 CAPTURE_MEMORY_HOURS   = 72;     % How long poachers remember a capture site (0 = forever)
 DEEP_FOREST_M = 10000;  
 % -------------------------------------------------------------------------
@@ -483,8 +483,8 @@ while ishandle(h_fig)
             d_enc = norm([poachers(p).x - capture_sites(s,1), ...
                           poachers(p).y - capture_sites(s,2)]);
             if d_enc < m2px(CAPTURE_AVOID_RADIUS_M) && d_enc > 0
-                des_vx = des_vx + ((poachers(p).x - capture_sites(s,1)) / d_enc) * CAPTURE_FORCE_STRENGTH;
-                des_vy = des_vy + ((poachers(p).y - capture_sites(s,2)) / d_enc) * CAPTURE_FORCE_STRENGTH;
+                des_vx = des_vx + ((poachers(p).x - capture_sites(s,1)) / d_enc) * CAPTURE_FEAR_STRENGTH;
+                des_vy = des_vy + ((poachers(p).y - capture_sites(s,2)) / d_enc) * CAPTURE_FEAR_STRENGTH;
             end
         end
                     
