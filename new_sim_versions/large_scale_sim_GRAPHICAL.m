@@ -28,12 +28,15 @@ REF_WIDTH = 1000; REF_HEIGHT = 1000;
 SF_X = WIDTH / REF_WIDTH;
 SF_Y = HEIGHT / REF_HEIGHT;
 METERS_PER_PIXEL = 158; 
+DETECTION_PROBABILITY = 0.90; 
+SCAN_INTERVAL_SIM = 1.0;  
+% --- AGENT CONFIGURATION ---
+NUM_ELEPHANTS = 20; 
+NUM_POACHERS = 10;
 SPEED_ELEPHANT_MPS = 1.11; % Exactly 4 km/hr
 SPEED_POACHER_MPS = 0.55;  % Exactly 2 km/hr
 SPEED_RANGER_MPS = 5.55;   % Exactly 20 km/hr
-DETECTION_PROBABILITY = 0.90; 
-POACH_PROBABILITY = 0.85; % Changing from 50% to 85% as Poach Distance is now 100m
-SCAN_INTERVAL_SIM = 1.0;  
+POACH_PROBABILITY = 0.85;
 % --- MIC PLACEMENT STRATEGY SELECTOR ---
 % 1 = Uniform Global Spread
 % 2 = Targeted Fortress (Red Zones & Green Zone)
@@ -97,9 +100,8 @@ attractor.sensing_range = m2px(BAI_SENSE_M);
 % -------------------------------------------------------------------------
 % 4. AGENT INITIALIZATION
 % -------------------------------------------------------------------------
-% --- ELEPHANTS (20 Total) ---
-num_elephants = 20; 
-for k = 1:num_elephants
+% --- ELEPHANTS ---
+for k = 1:NUM_ELEPHANTS
     valid_start = false;
     while ~valid_start
         sx = rand() * WIDTH; sy = rand() * HEIGHT;
@@ -144,9 +146,8 @@ for k = 1:num_elephants
         end
     end
 end
-% --- POACHERS (10 Total) ---
-num_poachers = 10;
-for p = 1:num_poachers
+% --- POACHERS ---
+for p = 1:NUM_POACHERS
     valid_start = false;
     while ~valid_start
         if rand() > 0.5
@@ -349,9 +350,9 @@ end
 rectangle(ax, 'Position', [attractor.x-attractor.radius, attractor.y-attractor.radius, attractor.radius*2, attractor.radius*2], ...
           'Curvature', [1 1], 'FaceColor', [0 1 0 0.3], 'EdgeColor', 'g', 'LineWidth', 2);
 % Target the main axes 'ax'
-for k=1:num_elephants, h_players(k)=plot(ax, NaN, NaN); end
-for p=1:num_poachers, h_poachers(p)=plot(ax, NaN, NaN); end
-for p=1:num_poachers, h_rangers(p)=plot(ax, NaN, NaN); end
+for k=1:NUM_ELEPHANTS, h_players(k)=plot(ax, NaN, NaN); end
+for p=1:NUM_POACHERS, h_poachers(p)=plot(ax, NaN, NaN); end
+for p=1:NUM_POACHERS, h_rangers(p)=plot(ax, NaN, NaN); end
 for m=1:num_mics
     h_mics(m) = rectangle(ax, 'Position', [0 0 1 1], 'FaceColor', 'b', 'EdgeColor', 'w');
     h_rings_e(m) = rectangle(ax, 'Position', [0 0 1 1], 'Curvature', [1 1], 'EdgeColor', [0 1 1 0.4], 'LineStyle', '--', 'LineWidth', 1.2);
@@ -362,10 +363,10 @@ h_status_text = text(ax, WIDTH/2, 50, '', 'FontSize', 20, 'FontWeight', 'bold', 
 % -------------------------------------------------------------------------
 % 6.5. INITIAL RENDER & 10-SECOND COUNTDOWN
 % -------------------------------------------------------------------------
-for p=1:num_poachers
+for p=1:NUM_POACHERS
     set(h_poachers(p), 'XData', poachers(p).x, 'YData', poachers(p).y, 'Marker', 'o', 'MarkerFaceColor', 'm', 'MarkerEdgeColor', 'w', 'MarkerSize', 6);
 end
-for k=1:num_elephants
+for k=1:NUM_ELEPHANTS
     set(h_players(k), 'XData', players(k).x, 'YData', players(k).y, 'Marker', 'o', 'MarkerFaceColor', 'b', 'MarkerEdgeColor', 'w', 'MarkerSize', max(3, 8*SF_X));
 end
 for m=1:num_mics
@@ -390,7 +391,7 @@ init_sidebar_text = sprintf([ ...
     'Total: %d\n', ...
     'Active: %d\n', ...
     'Neutralized: 0'], ...
-    strat_name(MIC_STRATEGY), num_elephants, num_elephants, num_poachers, num_poachers);
+    strat_name(MIC_STRATEGY), NUM_ELEPHANTS, NUM_ELEPHANTS, NUM_POACHERS, NUM_POACHERS);
 set(h_report_text, 'String', init_sidebar_text);
 for cd = 10:-1:1
     if ~ishandle(h_fig), break; end
@@ -413,7 +414,7 @@ last_multiplier = -1;
 capture_sites = zeros(0, 3);
 
 % Pre-allocate threat lines buffer — fixed size, no per-frame allocation
-max_tl = num_poachers * 4;
+max_tl = NUM_POACHERS * 4;
 threat_lines_x = NaN(1, max_tl);
 threat_lines_y = NaN(1, max_tl);
 
@@ -452,7 +453,7 @@ while ishandle(h_fig)
     step_r = (SPEED_RANGER_MPS * time_multiplier * real_dt) / METERS_PER_PIXEL;
     
     % --- 1. POACHER MOVEMENT ---
-    for p = 1:num_poachers
+    for p = 1:NUM_POACHERS
         if poachers(p).is_caught, continue; end 
         dist = norm([poachers(p).target_x - poachers(p).x, poachers(p).target_y - poachers(p).y]);
         
@@ -512,7 +513,7 @@ while ishandle(h_fig)
     end
     
     % --- 2. ELEPHANT MOVEMENT ---
-    for k=1:num_elephants
+    for k=1:NUM_ELEPHANTS
         if players(k).is_poached, continue; end 
         dist = norm([players(k).target_x - players(k).x, players(k).target_y - players(k).y]);
         d_bai = norm([players(k).x - attractor.x, players(k).y - attractor.y]);
@@ -582,7 +583,7 @@ while ishandle(h_fig)
             
             e_in_range = false; p_in_range = false;
             
-            for k=1:num_elephants
+            for k=1:NUM_ELEPHANTS
                 if players(k).is_poached, continue; end
                 if norm([players(k).x-mics(m).x, players(k).y-mics(m).y]) < mic_specs.range_e
                     e_in_range = true;
@@ -593,7 +594,7 @@ while ishandle(h_fig)
                 end
             end
             
-            for p=1:num_poachers
+            for p=1:NUM_POACHERS
                 if poachers(p).is_caught, continue; end
                 if norm([poachers(p).x-mics(m).x, poachers(p).y-mics(m).y]) < mic_specs.range_p
                     p_in_range = true;
@@ -611,7 +612,7 @@ while ishandle(h_fig)
             mics(m).has_memory = (current_sim_time - mics(m).elephant_memory) <= 14400;
             
             if mics(m).active_p && (mics(m).active_e || mics(m).has_memory)
-                for p=1:num_poachers
+                for p=1:NUM_POACHERS
                     if poachers(p).is_caught || poachers(p).is_targeted, continue; end
                     
                     if norm([poachers(p).x-mics(m).x, poachers(p).y-mics(m).y]) < mic_specs.range_p
@@ -640,7 +641,7 @@ while ishandle(h_fig)
     threat_lines_y(:) = NaN;
     tl_idx = 0;
     
-    for p = 1:num_poachers
+    for p = 1:NUM_POACHERS
         if poachers(p).is_targeted && ~poachers(p).is_caught
             dist = norm([poachers(p).x - poachers(p).ranger_x, poachers(p).y - poachers(p).ranger_y]);
             
@@ -665,7 +666,7 @@ while ishandle(h_fig)
     show_poached_alert = false;
     show_caught_alert = false;
 
-    for p = 1:num_poachers
+    for p = 1:NUM_POACHERS
         if poachers(p).is_caught 
             if (current_sim_time - poachers(p).caught_time) < 3.0
                 show_caught_alert = true; 
@@ -674,7 +675,7 @@ while ishandle(h_fig)
     end
 
     % Single pass: reset flags and run poaching logic using same distance computation
-    for k = 1:num_elephants
+    for k = 1:NUM_ELEPHANTS
         if players(k).is_poached
             if (current_sim_time - players(k).poach_time) < 3.0
                 show_poached_alert = true;
@@ -685,7 +686,7 @@ while ishandle(h_fig)
         players(k).is_threatened = false;
         elephant_in_range = false;
 
-        for p = 1:num_poachers
+        for p = 1:NUM_POACHERS
             if poachers(p).is_caught, continue; end
 
             d_ep = norm([players(k).x-poachers(p).x, players(k).y-poachers(p).y]);
@@ -735,7 +736,7 @@ while ishandle(h_fig)
     end
     
     % --- 5. RENDER & UI UPDATE ---
-    for p=1:num_poachers
+    for p=1:NUM_POACHERS
         if poachers(p).is_caught
             set(h_poachers(p), 'XData', poachers(p).x, 'YData', poachers(p).y, 'Marker', 'p', 'MarkerFaceColor', 'g', 'MarkerEdgeColor', 'g', 'MarkerSize', 14);
             set(h_rangers(p), 'XData', NaN, 'YData', NaN); 
@@ -749,7 +750,7 @@ while ishandle(h_fig)
         end
     end
     
-    for k=1:num_elephants
+    for k=1:NUM_ELEPHANTS
         if players(k).is_poached
             set(h_players(k), 'XData', players(k).x, 'YData', players(k).y, 'Marker', 'x', 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'r', 'MarkerSize', 12, 'LineWidth', 2);
         elseif players(k).is_threatened
@@ -790,9 +791,9 @@ while ishandle(h_fig)
     % Sidebar updates every 15 frames — no need to push every frame
     if mod(frame_count, 15) == 0
         poached_count = sum([players.is_poached]);
-        safe_e = num_elephants - poached_count;
+        safe_e = NUM_ELEPHANTS - poached_count;
         caught_count = sum([poachers.is_caught]);
-        active_p = num_poachers - caught_count;
+        active_p = NUM_POACHERS - caught_count;
         
         sim_days = floor(current_sim_time / 86400);
         sim_hours = floor(mod(current_sim_time, 86400) / 3600);
@@ -813,7 +814,7 @@ while ishandle(h_fig)
             'Total: %d\n', ...
             'Active: %d\n', ...
             'Neutralized: %d'], ...
-            strat_name(MIC_STRATEGY), sim_days, sim_hours, num_elephants, safe_e, poached_count, num_poachers, active_p, caught_count);
+            strat_name(MIC_STRATEGY), sim_days, sim_hours, NUM_ELEPHANTS, safe_e, poached_count, NUM_POACHERS, active_p, caught_count);
         
         set(h_report_text, 'String', sidebar_text);
     end
