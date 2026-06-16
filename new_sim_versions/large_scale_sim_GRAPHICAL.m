@@ -60,9 +60,12 @@ MIC_RANGE_P_M = 200; % 200m for realistic poacher detection by Mic
 POACH_DIST_M = 100;  % 100m for realistic poacher elephant distance for poaching     
 DIST_REACHED_M = 1266;   
 AVOID_BUFFER_M = 2533;   
-CAPTURE_AVOID_RADIUS_M = 4000;   % How far a danger memory repels poachers (~4 km)
+CAPTURE_AVOID_RADIUS_M = 4000;  % How far a danger memory repels poachers (~4 km)
 CAPTURE_FEAR_STRENGTH = 3.0;    % Push weight; set to 0 to disable poacher capture avoidance
-CAPTURE_MEMORY_HOURS   = 72;     % How long poachers remember a capture site (0 = forever)
+CAPTURE_MEMORY_HOURS   = 72;    % How long poachers remember a capture site (0 = forever)
+POACH_AVOID_RADIUS_M = 4000;    % How far a danger memory repels elephants (~4 km)
+POACH_FEAR_STRENGTH = 3.0;      % Push weight; set to 0 to disable elephant poaching site avoidance
+POACH_MEMORY_HOURS   = 192;     % How long elephants remember a poaching site (0 = forever)
 DEEP_FOREST_M = 10000;  
 % -------------------------------------------------------------------------
 % 2. PARK BOUNDARY DEFINITION 
@@ -475,7 +478,7 @@ while ishandle(h_fig)
 
         % --- Avoid past capture sites ---
         for s = 1:size(capture_sites, 1)
-            site_age_hr = (current_sim_time - capture_sites(s,3)) / 3600;   % if sim_time is in seconds
+            site_age_hr = (current_sim_time - capture_sites(s,3)) / 3600;
             if CAPTURE_MEMORY_HOURS > 0 && site_age_hr > CAPTURE_MEMORY_HOURS
                 continue;   
             end
@@ -553,6 +556,22 @@ while ishandle(h_fig)
             d_rep = norm([players(k).x-repulsors(r).x, players(k).y-repulsors(r).y]);
             if d_rep < repulsors(r).radius + m2px(AVOID_BUFFER_M)
                  des_vx = des_vx + ((players(k).x-repulsors(r).x)/d_rep)*4.0; des_vy = des_vy + ((players(k).y-repulsors(r).y)/d_rep)*4.0;
+            end
+        end
+
+        % --- Avoid past poaching sites ---
+        for p=1:length(players)
+            if ~players(p).is_poached, continue; end
+            site_age_hr = (current_sim_time - players(p).poach_time) / 3600;
+            if POACH_MEMORY_HOURS > 0 && site_age_hr > POACH_MEMORY_HOURS
+                continue;
+            end
+
+            d_site = norm([players(k).x - players(p).x, players(k).y - players(p).y]);
+
+            if d_site < m2px(POACH_AVOID_RADIUS_M) && d_site > 0 
+                des_vx = des_vx + ((players(k).x - players(p).x) / d_site) * POACH_FEAR_STRENGTH;
+                des_vy = des_vy + ((players(k).y - players(p).y) / d_site) * POACH_FEAR_STRENGTH;
             end
         end
         
