@@ -37,6 +37,7 @@ SPEED_ELEPHANT_MPS = 1.11; % Exactly 4 km/hr
 SPEED_POACHER_MPS = 0.55;  % Exactly 2 km/hr
 SPEED_RANGER_MPS = 5.55;   % Exactly 20 km/hr
 POACH_PROBABILITY = 0.85;
+RANGER_CAPTURE_PROBABILITY = 0.85; % Chance of a ranger neutralizing a poacher
 % --- MIC PLACEMENT STRATEGY SELECTOR ---
 % 1 = Uniform Global Spread
 % 2 = Targeted Fortress (Red Zones & Green Zone)
@@ -192,6 +193,7 @@ for p = 1:NUM_POACHERS
     poachers(p).caught_time = -999;
     
     poachers(p).is_targeted = false;
+    poachers(p).ranger_rolled = false;
     poachers(p).ranger_x = -999;
     poachers(p).ranger_y = -999;
     poachers(p).base_x = -999;
@@ -668,15 +670,30 @@ while ishandle(h_fig)
             threat_lines_y(tl_idx+1:tl_idx+4) = [poachers(p).base_y, poachers(p).ranger_y, poachers(p).y, NaN];
             tl_idx = tl_idx + 4;
             
-            if dist < m2px(500) 
-                poachers(p).is_caught = true;
-                poachers(p).caught_time = current_sim_time;
-                capture_sites(end+1, :) = [poachers(p).x, poachers(p).y, current_sim_time];
+            if dist < m2px(500) % Ranger rolls to neutralize poacher
+                if ~poachers(p).ranger_rolled
+                    poachers(p).ranger_rolled = true;
+                    if rand() <= RANGER_CAPTURE_PROBABILITY
+                        % SUCCESS -> neutralize
+                        poachers(p).is_caught = true;
+                        poachers(p).caught_time = current_sim_time;
+                    else
+                        % FAILURE -> poacher escapes and flees
+                        poachers(p).is_targeted = false;
+                        poachers(p).ranger_x = -999;
+                        poachers(p).ranger_y = -999;
+                        idx_p = randi(count_g);
+                        poachers(p).target_x = pool_general(idx_p, 1);
+                        poachers(p).target_y = pool_general(idx_p, 2);
+                    end
+                    capture_sites(end+1, :) = [poachers(p).x, poachers(p).y, current_sim_time];
+                end
             else
                 vec_x = (poachers(p).x - poachers(p).ranger_x) / dist;
                 vec_y = (poachers(p).y - poachers(p).ranger_y) / dist;
                 poachers(p).ranger_x = poachers(p).ranger_x + (vec_x * step_r);
                 poachers(p).ranger_y = poachers(p).ranger_y + (vec_y * step_r);
+                poachers(p).ranger_rolled = false;
             end
         end
     end
@@ -710,7 +727,7 @@ while ishandle(h_fig)
 
             d_ep = norm([players(k).x-poachers(p).x, players(k).y-poachers(p).y]);
 
-            if d_ep < m2px(POACH_DIST_M)
+            if d_ep < m2px(POACH_DIST_M) % Poach encounter
                 elephant_in_range = true;
                 d_safe = norm([players(k).x - attractor.x, players(k).y - attractor.y]);
                 if d_safe > attractor.radius
