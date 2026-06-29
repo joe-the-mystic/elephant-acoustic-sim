@@ -40,6 +40,7 @@ SPEED_POACHER_MPS   = 0.55;
 SPEED_RANGER_MPS    = 5.55;
 DETECTION_PROBABILITY = 0.90;
 POACH_PROBABILITY     = 0.85;
+RANGER_CAPTURE_PROBABILITY = 0.85; % Chance of a ranger neutralizing a poacher
 SCAN_INTERVAL_SIM     = 1.0;
 
 m2px = @(meters) meters / METERS_PER_PIXEL;
@@ -48,9 +49,13 @@ m2px = @(meters) meters / METERS_PER_PIXEL;
 RAD_NOLA_M    = 3040; RAD_SALO_M   = 2280; RAD_BAYANGA_M  = 3040;
 RAD_LIDJOMBO_M= 2280; RAD_MOSSIPA_M= 2280;
 BAI_RAD_M     = 400;  BAI_SENSE_M  = 6080;
-MIC_RANGE_E_M = 3950; MIC_RANGE_P_M = 200;
+MIC_RANGE_E_M = 3950; MIC_RANGE_P_M = 200; MIC_RANGE_G_M = 1200;  % 1.2km gunshot detection
 POACH_DIST_M  = 100;
 DIST_REACHED_M= 1266; AVOID_BUFFER_M= 2533; DEEP_FOREST_M = 10000;
+
+% Danger-memory avoidance (capture sites repel poachers, poach sites repel elephants)
+CAPTURE_AVOID_RADIUS_M = 4000;  CAPTURE_FEAR_STRENGTH = 3.0;  CAPTURE_MEMORY_HOURS = 72;
+POACH_AVOID_RADIUS_M   = 4000;  POACH_FEAR_STRENGTH   = 3.0;  POACH_MEMORY_HOURS   = 192;
 
 MAX_SIM_TIME  = MAX_SIM_DAYS * 86400;
 
@@ -139,6 +144,7 @@ if count_d == 0, pool_deep = pool_elephant; count_d = count_e; end
 % =========================================================================
 mic_specs.range_e = m2px(MIC_RANGE_E_M);
 mic_specs.range_p = m2px(MIC_RANGE_P_M);
+mic_specs.range_g = m2px(MIC_RANGE_G_M);
 
 fprintf('Placing microphones (Strategy %d: %s, N=%d)...\n', MIC_STRATEGY, strat_names(MIC_STRATEGY), NUM_MICS);
 if MIC_STRATEGY == 1
@@ -243,7 +249,9 @@ for run = 1:NUM_RUNS
         idx=randi(count_g);
         poachers(p).target_x=pool_general(idx,1); poachers(p).target_y=pool_general(idx,2);
         poachers(p).is_caught=false; poachers(p).caught_time=-999;
+        poachers(p).last_gunshot_time=-999999;
         poachers(p).is_targeted=false;
+        poachers(p).ranger_rolled=false;
         poachers(p).ranger_x=-999; poachers(p).ranger_y=-999;
         poachers(p).base_x=-999;   poachers(p).base_y=-999;
     end
@@ -254,6 +262,7 @@ for run = 1:NUM_RUNS
     time_1st_neutral  = 0;
     first_poach_done  = false;
     first_neutral_done= false;
+    capture_sites     = zeros(0,3);  % [x_px, y_px, sim_time] of past ranger captures
 
     % =================================================================
     % SIMULATION LOOP (no graphics)
@@ -278,6 +287,21 @@ for run = 1:NUM_RUNS
                 des_vx=des_vx+((poachers(p).x-attractor.x)/d_green)*4.0;
                 des_vy=des_vy+((poachers(p).y-attractor.y)/d_green)*4.0;
             end
+
+            % --- Avoid past capture sites ---
+            for s = 1:size(capture_sites, 1)
+                site_age_hr = (current_sim_time - capture_sites(s,3)) / 3600;
+                if CAPTURE_MEMORY_HOURS > 0 && site_age_hr > CAPTURE_MEMORY_HOURS
+                    continue;
+                end
+                d_enc = norm([poachers(p).x - capture_sites(s,1), ...
+                              poachers(p).y - capture_sites(s,2)]);
+                if d_enc < m2px(CAPTURE_AVOID_RADIUS_M) && d_enc > 0
+                    des_vx = des_vx + ((poachers(p).x - capture_sites(s,1)) / d_enc) * CAPTURE_FEAR_STRENGTH;
+                    des_vy = des_vy + ((poachers(p).y - capture_sites(s,2)) / d_enc) * CAPTURE_FEAR_STRENGTH;
+                end
+            end
+
             mag=norm([des_vx,des_vy]); if mag>0, des_vx=des_vx/mag; des_vy=des_vy/mag; end
             poachers(p).vx=poachers(p).vx*0.95+des_vx*0.05;
             poachers(p).vy=poachers(p).vy*0.95+des_vy*0.05;
@@ -332,6 +356,21 @@ for run = 1:NUM_RUNS
                     des_vy=des_vy+((players(k).y-repulsors(r).y)/d_rep)*4.0;
                 end
             end
+
+            % --- Avoid past poaching sites ---
+            for p=1:length(players)
+                if ~players(p).is_poached, continue; end
+                site_age_hr = (current_sim_time - players(p).poach_time) / 3600;
+                if POACH_MEMORY_HOURS > 0 && site_age_hr > POACH_MEMORY_HOURS
+                    continue;
+                end
+                d_site = norm([players(k).x - players(p).x, players(k).y - players(p).y]);
+                if d_site < m2px(POACH_AVOID_RADIUS_M) && d_site > 0
+                    des_vx = des_vx + ((players(k).x - players(p).x) / d_site) * POACH_FEAR_STRENGTH;
+                    des_vy = des_vy + ((players(k).y - players(p).y) / d_site) * POACH_FEAR_STRENGTH;
+                end
+            end
+
             mag=norm([des_vx,des_vy]); if mag>0, des_vx=des_vx/mag; des_vy=des_vy/mag; end
             players(k).vx=players(k).vx*0.95+des_vx*0.05;
             players(k).vy=players(k).vy*0.95+des_vy*0.05;
@@ -376,10 +415,15 @@ for run = 1:NUM_RUNS
                     end
                 end
                 mics(m).has_memory=(current_sim_time-mics(m).elephant_memory)<=14400;
-                if mics(m).active_p && (mics(m).active_e||mics(m).has_memory)
+                if (mics(m).active_e||mics(m).has_memory)
                     for p=1:num_poachers
                         if poachers(p).is_caught||poachers(p).is_targeted, continue; end
-                        if norm([poachers(p).x-mics(m).x, poachers(p).y-mics(m).y])<mic_specs.range_p
+                        d_mp=norm([poachers(p).x-mics(m).x, poachers(p).y-mics(m).y]);
+                        presence_det = mics(m).active_p && d_mp<mic_specs.range_p;
+                        % gunshot window = 2 physics steps (replaces GRAPHICAL's 2*SCAN_INTERVAL_SIM*time_multiplier)
+                        gunshot_det = (current_sim_time-poachers(p).last_gunshot_time)<=2*SIM_DT ...
+                            && d_mp<mic_specs.range_g && rand()<=DETECTION_PROBABILITY;
+                        if presence_det || gunshot_det
                             mics(m).threat=true; poachers(p).is_targeted=true;
                             closest_dist=inf; closest_base=1;
                             for r=1:length(repulsors)
@@ -400,17 +444,33 @@ for run = 1:NUM_RUNS
         for p = 1:num_poachers
             if poachers(p).is_targeted && ~poachers(p).is_caught
                 dist=norm([poachers(p).x-poachers(p).ranger_x, poachers(p).y-poachers(p).ranger_y]);
-                if dist<m2px(500)
-                    poachers(p).is_caught=true; poachers(p).caught_time=current_sim_time;
-                    if ~first_neutral_done
-                        time_1st_neutral=current_sim_time/86400;
-                        first_neutral_done=true;
+                if dist<m2px(500) % Ranger rolls to neutralize poacher
+                    if ~poachers(p).ranger_rolled
+                        poachers(p).ranger_rolled=true;
+                        if rand()<=RANGER_CAPTURE_PROBABILITY
+                            % SUCCESS -> neutralize
+                            poachers(p).is_caught=true; poachers(p).caught_time=current_sim_time;
+                            if ~first_neutral_done
+                                time_1st_neutral=current_sim_time/86400;
+                                first_neutral_done=true;
+                            end
+                        else
+                            % FAILURE -> poacher escapes and flees
+                            poachers(p).is_targeted=false;
+                            poachers(p).ranger_x=-999;
+                            poachers(p).ranger_y=-999;
+                            idx_p=randi(count_g);
+                            poachers(p).target_x=pool_general(idx_p,1);
+                            poachers(p).target_y=pool_general(idx_p,2);
+                        end
+                        capture_sites(end+1,:)=[poachers(p).x, poachers(p).y, current_sim_time];
                     end
                 else
                     vx=(poachers(p).x-poachers(p).ranger_x)/dist;
                     vy=(poachers(p).y-poachers(p).ranger_y)/dist;
                     poachers(p).ranger_x=poachers(p).ranger_x+vx*step_r;
                     poachers(p).ranger_y=poachers(p).ranger_y+vy*step_r;
+                    poachers(p).ranger_rolled=false;
                 end
             end
         end
@@ -430,6 +490,7 @@ for run = 1:NUM_RUNS
                         players(k).is_threatened=true;
                         if ~players(k).encounter_rolled
                             players(k).encounter_rolled=true;
+                            poachers(p).last_gunshot_time=current_sim_time;
                             if rand()<=POACH_PROBABILITY
                                 players(k).is_poached=true;
                                 players(k).poach_time=current_sim_time;
