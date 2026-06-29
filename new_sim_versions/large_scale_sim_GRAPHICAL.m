@@ -30,6 +30,7 @@ SF_Y = HEIGHT / REF_HEIGHT;
 METERS_PER_PIXEL = 158; 
 DETECTION_PROBABILITY = 0.90; 
 SCAN_INTERVAL_SIM = 1.0;  
+MIC_ELEPHANT_MEMORY_SECONDS = 14400; % 4 Hour elephant detection memory
 % --- AGENT CONFIGURATION ---
 NUM_ELEPHANTS = 20; 
 NUM_POACHERS = 10;
@@ -58,6 +59,7 @@ BAI_RAD_M = 500;
 BAI_SENSE_M = 6080;
 MIC_RANGE_E_M = 3950;
 MIC_RANGE_P_M = 200; % 200m for realistic poacher detection by Mic
+MIC_RANGE_G_M = 1200; % 1.2km for realistic gunshot detection by Mic
 POACH_DIST_M = 100;  % 100m for realistic poacher elephant distance for poaching     
 DIST_REACHED_M = 1266;   
 AVOID_BUFFER_M = 2533;   
@@ -191,7 +193,7 @@ for p = 1:NUM_POACHERS
     end
     poachers(p).is_caught = false; 
     poachers(p).caught_time = -999;
-    
+    poachers(p).last_gunshot_time = -999999;
     poachers(p).is_targeted = false;
     poachers(p).ranger_rolled = false;
     poachers(p).ranger_x = -999;
@@ -260,6 +262,8 @@ end
 % -------------------------------------------------------------------------
 mic_specs.range_e = m2px(MIC_RANGE_E_M);        
 mic_specs.range_p = m2px(MIC_RANGE_P_M);        
+mic_specs.range_g = m2px(MIC_RANGE_G_M);
+
 if MIC_STRATEGY == 1
     [mics, num_mics] = place_mics_uniform(WIDTH, HEIGHT, isInsidePark, mic_specs, NUM_MICS);
 elseif MIC_STRATEGY == 2
@@ -630,19 +634,24 @@ while ishandle(h_fig)
             end
             
             % Compute ONCE per scan interval for efficiency
-            mics(m).has_memory = (current_sim_time - mics(m).elephant_memory) <= 14400;
-            
-            if mics(m).active_p && (mics(m).active_e || mics(m).has_memory)
+            mics(m).has_memory = (current_sim_time - mics(m).elephant_memory) <= MIC_ELEPHANT_MEMORY_SECONDS;
+
+            % Decide whether threat exists
+            if (mics(m).active_e || mics(m).has_memory)
                 for p=1:NUM_POACHERS
                     if poachers(p).is_caught || poachers(p).is_targeted, continue; end
-                    
-                    if norm([poachers(p).x-mics(m).x, poachers(p).y-mics(m).y]) < mic_specs.range_p
+                    d_mp = norm([poachers(p).x - mics(m).x, poachers(p).y - mics(m).y]);
+
+                    presence_det = mics(m).active_p && d_mp < mic_specs.range_p;
+                    gunshot_det = (current_sim_time - poachers(p).last_gunshot_time) <= 2 * SCAN_INTERVAL_SIM * time_multiplier ...
+                        && d_mp < mic_specs.range_g && rand() <= DETECTION_PROBABILITY;
+
+                    if presence_det || gunshot_det
                         mics(m).threat = true;
-                        poachers(p).is_targeted = true; 
-                        
+                        poachers(p).is_targeted = true;
                         closest_dist = inf; closest_base = 1;
-                        for r=1:length(repulsors)
-                            d = norm([poachers(p).x-repulsors(r).x, poachers(p).y-repulsors(r).y]);
+                        for r = 1:length(repulsors)
+                            d = norm([poachers(p).x - repulsors(r).x, poachers(p).y - repulsors(r).y]);
                             if d < closest_dist, closest_dist = d; closest_base = r; end
                         end
                         
@@ -738,6 +747,7 @@ while ishandle(h_fig)
                     % One roll per encounter — resets only when elephant leaves POACH_DIST_M
                     if ~players(k).encounter_rolled
                         players(k).encounter_rolled = true;
+                        poachers(p).last_gunshot_time = current_sim_time;
 
                         if rand() <= POACH_PROBABILITY
                             % SUCCESS: Elephant is poached
